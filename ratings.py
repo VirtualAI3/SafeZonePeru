@@ -1,41 +1,36 @@
-import sqlite3
 import os
 import json
 from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
 
-DB_PATH = os.path.join(os.path.dirname(__file__), "data/database.db")
-TZ = ZoneInfo("America/Lima")
+from supabase import create_client
+
+TZ = ZoneInfo(os.environ.get("APP_TIMEZONE", "America/Lima"))
 
 
-def init_db():
-    conn = sqlite3.connect(DB_PATH)
-    c = conn.cursor()
-    c.execute(
-        """
-        CREATE TABLE IF NOT EXISTS ratings (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            created_at TEXT,
-            stars INTEGER,
-            comment TEXT
-        )
-        """
-    )
-    c.execute(
-        """
-        CREATE TABLE IF NOT EXISTS retrain_logs (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            started_at TEXT,
-            finished_at TEXT,
-            avg_rating REAL,
-            low_count INTEGER,
-            params_json TEXT,
-            success INTEGER
-        )
-        """
-    )
-    conn.commit()
-    conn.close()
+# Supabase client (lazy)
+_supabase = None
+
+
+def _get_supabase():
+    global _supabase
+    if _supabase is not None:
+        return _supabase
+
+    url = os.environ.get("SUPABASE_URL")
+    key = os.environ.get("SUPABASE_KEY")
+    if not url or not key:
+        raise RuntimeError("SUPABASE_URL and SUPABASE_KEY must be set in environment")
+
+    _supabase = create_client(url, key)
+    return _supabase
+
+
+# NOTE: Supabase tables (`ratings`, `retrain_logs`) must be provisioned in the
+# Supabase project. This module assumes those tables exist with the following
+# minimal schema:
+# ratings(created_at text, stars int, comment text)
+# retrain_logs(started_at text, finished_at text, avg_rating float, low_count int, params_json text, success boolean)
 
 
 def _now_iso():
@@ -43,29 +38,18 @@ def _now_iso():
 
 
 def add_rating(stars: int, comment: str | None = None):
-    init_db()
     now = _now_iso()
-    conn = sqlite3.connect(DB_PATH)
-    c = conn.cursor()
-    c.execute(
-        "INSERT INTO ratings (created_at, stars, comment) VALUES (?, ?, ?)",
-        (now, int(stars), comment),
-    )
-    conn.commit()
-    conn.close()
+    supabase = _get_supabase()
+    payload = {"created_at": now, "stars": int(stars), "comment": comment}
+    supabase.table("ratings").insert(payload).execute()
 
 
 def count_low_ratings(low_star_threshold: int = 2, window_days: int = 7) -> int:
-    init_db()
     cutoff = (datetime.now(TZ) - timedelta(days=window_days)).isoformat()
-    conn = sqlite3.connect(DB_PATH)
-    c = conn.cursor()
-    c.execute(
-        "SELECT COUNT(*) FROM ratings WHERE stars <= ? AND created_at >= ?",
-        (low_star_threshold, cutoff),
-    )
-    cnt = c.fetchone()[0]
-    conn.close()
+    supabase = _get_supabase()
+    res = supabase.table("ratings").select("id", count="exact").lte("stars", low_star_threshold).gte("created_at", cutoff).execute()
+    # res.count should be provided by Supabase client; fallback to length
+    cnt = res.count if hasattr(res, "count") and res.count is not None else len(res.data or [])
     return int(cnt)
 
 
@@ -75,37 +59,28 @@ def should_trigger_retrain(low_star_threshold: int = 2, trigger_count: int = 5, 
     con `stars <= low_star_threshold` y además que no se haya hecho un reentrenamiento
     exitoso en esa misma ventana.
     """
-    init_db()
     low_cnt = count_low_ratings(low_star_threshold=low_star_threshold, window_days=window_days)
     if low_cnt < trigger_count:
         return False
 
     # Verificar si ya hubo reentrenamiento exitoso en la ventana
     cutoff = (datetime.now(TZ) - timedelta(days=window_days)).isoformat()
-    conn = sqlite3.connect(DB_PATH)
-    c = conn.cursor()
-    c.execute(
-        "SELECT COUNT(*) FROM retrain_logs WHERE started_at >= ? AND success = 1",
-        (cutoff,),
-    )
-    recent_retrains = c.fetchone()[0]
-    conn.close()
+    supabase = _get_supabase()
+    res = supabase.table("retrain_logs").select("id", count="exact").gte("started_at", cutoff).eq("success", True).execute()
+    recent_retrains = res.count if hasattr(res, "count") and res.count is not None else len(res.data or [])
     return recent_retrains == 0
 
 
 def _get_rating_stats(window_days: int = 7):
-    init_db()
     cutoff = (datetime.now(TZ) - timedelta(days=window_days)).isoformat()
-    conn = sqlite3.connect(DB_PATH)
-    c = conn.cursor()
-    c.execute("SELECT AVG(stars), COUNT(*) FROM ratings WHERE created_at >= ?", (cutoff,))
-    row = c.fetchone()
-    conn.close()
-    if row is None:
+    supabase = _get_supabase()
+    res = supabase.table("ratings").select("stars").gte("created_at", cutoff).execute()
+    rows = res.data or []
+    if not rows:
         return 0.0, 0
-    avg = row[0] or 0.0
-    cnt = row[1] or 0
-    return float(avg), int(cnt)
+    vals = [r.get("stars", 0) for r in rows]
+    avg = sum(vals) / len(vals)
+    return float(avg), int(len(vals))
 
 
 def _decide_hyperparams(avg_rating: float, low_count: int) -> dict:
@@ -139,28 +114,24 @@ def _decide_hyperparams(avg_rating: float, low_count: int) -> dict:
 
 
 def _create_retrain_entry(started_at: str, avg_rating: float, low_count: int, params: dict) -> int:
-    init_db()
-    conn = sqlite3.connect(DB_PATH)
-    c = conn.cursor()
-    c.execute(
-        "INSERT INTO retrain_logs (started_at, avg_rating, low_count, params_json, success) VALUES (?, ?, ?, ?, NULL)",
-        (started_at, avg_rating, low_count, json.dumps(params)),
-    )
-    conn.commit()
-    rid = c.lastrowid
-    conn.close()
-    return int(rid)
+    supabase = _get_supabase()
+    payload = {
+        "started_at": started_at,
+        "avg_rating": avg_rating,
+        "low_count": low_count,
+        "params_json": json.dumps(params),
+        "success": None,
+    }
+    res = supabase.table("retrain_logs").insert(payload).execute()
+    data = res.data or []
+    if data:
+        return int(data[0].get("id"))
+    return 0
 
 
 def _finalize_retrain_entry(rid: int, finished_at: str, success: bool):
-    conn = sqlite3.connect(DB_PATH)
-    c = conn.cursor()
-    c.execute(
-        "UPDATE retrain_logs SET finished_at = ?, success = ? WHERE id = ?",
-        (finished_at, 1 if success else 0, rid),
-    )
-    conn.commit()
-    conn.close()
+    supabase = _get_supabase()
+    supabase.table("retrain_logs").update({"finished_at": finished_at, "success": bool(success)}).eq("id", rid).execute()
 
 
 def request_retrain(params: dict) -> str:
@@ -183,7 +154,3 @@ def request_retrain(params: dict) -> str:
         json.dump(payload, f, ensure_ascii=False, indent=2)
     os.replace(tmp_path, req_path)
     return req_path
-
-
-# Inicializa DB al importar
-init_db()
