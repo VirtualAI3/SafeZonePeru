@@ -154,7 +154,7 @@ with col_info:
 
     st.write("---")
     st.subheader("Enviar Calificación de la App")
-    st.write("Tu feedback ayuda a mejorar los modelos. Si se detectan varias calificaciones bajas, se reentrenará automáticamente el modelo.")
+    st.write("Tu feedback ayuda a mejorar los modelos.")
 
     # Formulario de calificación: input numérico 0-5 (evita reruns al mover controles)
     with st.form("rating_form"):
