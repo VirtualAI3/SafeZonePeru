@@ -163,40 +163,26 @@ def _finalize_retrain_entry(rid: int, finished_at: str, success: bool):
     conn.close()
 
 
-def trigger_retrain() -> bool:
+def request_retrain(params: dict) -> str:
     """
-    Reentrena internamente usando una política basada en calificaciones (no expuesta
-    al usuario). Devuelve True si el reentrenamiento finaliza correctamente.
+    Crea un archivo RETRAIN_REQUEST.json en el repositorio con los parámetros
+    provistos por la app. Esta función SOLO crea la señal y NO ejecuta
+    el entrenamiento ni bloquea la aplicación.
+
+    Devuelve la ruta al archivo creado.
     """
-    init_db()
+    payload = {
+        "requested_at": _now_iso(),
+        "params": params,
+    }
 
-    window_days = 7
-    low_threshold = 2
-
-    if not should_trigger_retrain(low_star_threshold=low_threshold, trigger_count=5, window_days=window_days):
-        return False
-
-    avg, total = _get_rating_stats(window_days=window_days)
-    low = count_low_ratings(low_star_threshold=low_threshold, window_days=window_days)
-
-    params = _decide_hyperparams(avg_rating=avg, low_count=low)
-
-    started = _now_iso()
-    rid = _create_retrain_entry(started_at=started, avg_rating=avg, low_count=low, params=params)
-
-    success = False
-    try:
-        import train
-
-        train.run_training(**params)
-        success = True
-    except Exception:
-        success = False
-    finally:
-        finished = _now_iso()
-        _finalize_retrain_entry(rid, finished_at=finished, success=success)
-
-    return success
+    # Guardar de forma atómica
+    req_path = os.path.join(os.path.dirname(__file__), "RETRAIN_REQUEST.json")
+    tmp_path = req_path + ".tmp"
+    with open(tmp_path, "w", encoding="utf-8") as f:
+        json.dump(payload, f, ensure_ascii=False, indent=2)
+    os.replace(tmp_path, req_path)
+    return req_path
 
 
 # Inicializa DB al importar

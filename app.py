@@ -172,19 +172,16 @@ with col_info:
             trigger_count = 5
 
             if ratings.should_trigger_retrain(low_star_threshold=low_star_threshold, trigger_count=trigger_count):
-                with st.spinner("Se han detectado varias calificaciones bajas. Reentrenando modelos... esto puede tardar varios minutos."):
-                    ok = ratings.trigger_retrain()
+                # Decidir parámetros de reentrenamiento localmente y crear la señal
+                avg, total = ratings._get_rating_stats(window_days=7)
+                low = ratings.count_low_ratings(low_star_threshold=low_star_threshold, window_days=7)
+                params = ratings._decide_hyperparams(avg_rating=avg, low_count=low)
 
-                if ok:
-                    st.success("Reentrenamiento completado. La app se recargará para mostrar los nuevos resultados.")
-                    try:
-                        load_data.clear()
-                        load_geojson.clear()
-                    except Exception:
-                        pass
-                    st.experimental_rerun()
-                else:
-                    st.error("Ocurrió un error durante el reentrenamiento. Revisa los logs del servidor.")
+                try:
+                    req_path = ratings.request_retrain(params)
+                    st.info("Se ha solicitado reentrenamiento. La CI lo ejecutará automáticamente; la app no realizará el entrenamiento ahora.")
+                except Exception as e:
+                    st.error(f"No se pudo crear la solicitud de reentrenamiento: {e}")
         except Exception as e:
             st.error(f"Error guardando la calificación: {e}")
 
