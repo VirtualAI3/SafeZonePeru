@@ -1,7 +1,11 @@
 {
   "requested_at": "test",
   "params": {
-    "reason": "manual_test",
-    "force": true
+    "k_min": 2,
+    "k_max": 11,
+    "max_iter": 500,
+    "n_init": 10,
+    "covariance_type": "diag",
+    "random_state": 42
   }
 }
