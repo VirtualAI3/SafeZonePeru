@@ -153,7 +153,7 @@ with col_info:
         st.info("Haz clic en un área del mapa o selecciona una opción de la lista.")
 
     st.write("---")
-    st.subheader("Enviar Calificación de la App")
+    st.subheader("Enviar Calificacion de la App")
     st.write("Tu feedback ayuda a mejorar los modelos.")
 
     # Formulario de calificación: input numérico 0-5 (evita reruns al mover controles)
