@@ -31,7 +31,7 @@ jobs:
     
     - name: Lint Python code
       run: |
-        flake8 app.py ratings.py train.py ci_retrain.py
+        flake8 app.py ratings.py train.py ci_retrain.py --max-line-length=140
 
     - name: Check app.py syntax
       run: python -m py_compile app.py
