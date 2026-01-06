@@ -4,7 +4,7 @@ import json
 from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
 
-DB_PATH = os.path.join(os.path.dirname(__file__), "database.db")
+DB_PATH = os.path.join(os.path.dirname(__file__), "data/database.db")
 TZ = ZoneInfo("America/Lima")
 
 
@@ -173,11 +173,9 @@ def trigger_retrain() -> bool:
     window_days = 7
     low_threshold = 2
 
-    # Comprobar condición de disparo (usa ventana semanal)
     if not should_trigger_retrain(low_star_threshold=low_threshold, trigger_count=5, window_days=window_days):
         return False
 
-    # Estadísticas y conteos en la ventana
     avg, total = _get_rating_stats(window_days=window_days)
     low = count_low_ratings(low_star_threshold=low_threshold, window_days=window_days)
 

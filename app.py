@@ -46,13 +46,13 @@ nivel_analisis = st.sidebar.radio(
 )
 
 if nivel_analisis == "Distrital":
-    csv_path = "resultados_distritales.csv"
-    geojson_path = "peru_distrital_simple.geojson"
+    csv_path = "data/resultados_distritales.csv"
+    geojson_path = "geojson/peru_distrital_simple.geojson"
     geo_key_plotly = "properties.IDDIST"
     df_col_nombre = "DIST_HECHO"
 else:
-    csv_path = "resultados_departamentales.csv"
-    geojson_path = "peru_departamental_simple.geojson"
+    csv_path = "data/resultados_departamentales.csv"
+    geojson_path = "geojson/peru_departamental_simple.geojson"
     geo_key_plotly = "properties.NOMBDEP"
     df_col_nombre = "DPTO_UNIFICADO"
 

@@ -3,7 +3,38 @@ import numpy as np
 import joblib
 from sklearn.preprocessing import StandardScaler
 from sklearn.mixture import GaussianMixture
+from pathlib import Path
+import shutil
+from datetime import datetime
 
+def save_with_backup(obj, path_models, filename, max_backups=5):
+    path_models = Path(path_models)
+    path_backup = path_models.parent / "model_backup"
+
+    path_models.mkdir(parents=True, exist_ok=True)
+    path_backup.mkdir(parents=True, exist_ok=True)
+
+    file_path = path_models / filename
+
+    if file_path.exists():
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        backup_name = f"{file_path.stem}_{timestamp}{file_path.suffix}"
+        backup_path = path_backup / backup_name
+        shutil.move(file_path, backup_path)
+        print(f"Backup creado: {backup_path.name}")
+
+        backups = sorted(
+            path_backup.glob(f"{file_path.stem}_*{file_path.suffix}"),
+            key=lambda f: f.stat().st_mtime,
+            reverse=True
+        )
+
+        for old_backup in backups[max_backups:]:
+            old_backup.unlink()
+            print(f"Backup eliminado: {old_backup.name}")
+
+    joblib.dump(obj, file_path)
+    print(f"Guardado: {file_path.name}")
 
 def calculate_weights(df):
     pesos_crimen = {
@@ -63,21 +94,27 @@ def train_logic_gmm(df_input, k_range, prefix, gmm_kwargs=None):
     clusters = best_model.predict(X_scaled)
     clusters = sort_clusters(best_model, X_scaled, clusters)
 
-    joblib.dump(best_model, f"modelo_gmm_{prefix}.joblib")
-    joblib.dump(scaler, f"scaler_{prefix}.joblib")
+    save_with_backup(
+        best_model,
+        "models",
+        f"modelo_gmm_{prefix}.joblib"
+    )
+
+    save_with_backup(
+        scaler,
+        "models",
+        f"scaler_{prefix}.joblib"
+    )
 
     return clusters
 
 
 def run_training(k_min: int = 2, k_max: int = 11, covariance_type: str = "diag",
                  max_iter: int = 500, n_init: int = 10, random_state: int = 42):
-    df = pd.read_csv("DATASET_Denuncias_Policiales_Ene 2018 a Nov 2025.csv")
+    df = pd.read_csv("datasets/DATASET_Denuncias_Policiales_Ene 2018 a Nov 2025.csv")
 
     df = calculate_weights(df)
 
-    # ===============================
-    # PIVOT DISTRITAL
-    # ===============================
     df_pivot_weighted = df.pivot_table(
         index=["UBIGEO_HECHO", "DPTO_HECHO_NEW", "PROV_HECHO", "DIST_HECHO"],
         columns="P_MODALIDADES",
@@ -92,9 +129,6 @@ def run_training(k_min: int = 2, k_max: int = 11, covariance_type: str = "diag",
         aggfunc="sum"
     ).fillna(0)
 
-    # ===============================
-    # UNIFICAR DEPARTAMENTOS
-    # ===============================
     def unificar_departamentos(nombre):
         nombre = str(nombre).upper()
         if "LIMA" in nombre:
@@ -103,7 +137,6 @@ def run_training(k_min: int = 2, k_max: int = 11, covariance_type: str = "diag",
             return "CALLAO"
         return nombre
 
-    # --- WEIGHTED ---
     df_dept_weighted = df_pivot_weighted.reset_index()
     df_dept_weighted["DPTO_UNIFICADO"] = (
         df_dept_weighted["DPTO_HECHO_NEW"]
@@ -116,7 +149,6 @@ def run_training(k_min: int = 2, k_max: int = 11, covariance_type: str = "diag",
         .sum(numeric_only=True)
     )
 
-    # --- REAL ---
     df_dept_real = df_pivot_real.reset_index()
     df_dept_real["DPTO_UNIFICADO"] = (
         df_dept_real["DPTO_HECHO_NEW"]
@@ -129,9 +161,6 @@ def run_training(k_min: int = 2, k_max: int = 11, covariance_type: str = "diag",
         .sum(numeric_only=True)
     )
 
-    # ===============================
-    # ENTRENAMIENTO
-    # ===============================
     k_range = range(k_min, k_max + 1)
     gmm_kwargs = {
         "covariance_type": covariance_type,
@@ -154,22 +183,16 @@ def run_training(k_min: int = 2, k_max: int = 11, covariance_type: str = "diag",
         gmm_kwargs=gmm_kwargs
     )
 
-    # ===============================
-    # ASIGNAR CLÚSTERES (MISMO ORDEN)
-    # ===============================
     df_departamental_real["cluster_danger_level"] = clusters_dept
     df_pivot_real["cluster_danger_level"] = clusters_dist
 
-    # ===============================
-    # GUARDAR RESULTADOS
-    # ===============================
     df_departamental_real.reset_index().to_csv(
-        "resultados_departamentales.csv",
+        "data/resultados_departamentales.csv",
         index=False
     )
 
     df_pivot_real.reset_index().to_csv(
-        "resultados_distritales.csv",
+        "data/resultados_distritales.csv",
         index=False
     )
 
